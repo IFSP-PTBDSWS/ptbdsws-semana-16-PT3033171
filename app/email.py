@@ -1,39 +1,56 @@
 from threading import Thread
 from flask import current_app, render_template
-from flask_mail import Message
-from . import mail
-
 import requests
-from datetime import datetime
 
 
-def send_async_email(app, msg):
+# -------------------------------------------------------------
+# SendGrid usando thread para não travar o servidor
+# -------------------------------------------------------------
+def send_async_sendgrid(app, to, subject, html):
     with app.app_context():
-        mail.send(msg)
+        api_key = app.config['SENDGRID_API_KEY']
+        from_email = app.config['SENDGRID_FROM']
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "personalizations": [{
+                "to": [{"email": to}],
+                "subject": subject
+            }],
+            "from": {"email": from_email},
+            "content": [{
+                "type": "text/html",
+                "value": html
+            }]
+        }
+
+        response = requests.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            headers=headers,
+            json=data
+        )
+
+        print("STATUS DO SENDGRID:", response.status_code, flush=True)
+        print("RESPOSTA:", response.text, flush=True)
 
 
-def send_email_zoho(to, subject, template, **kwargs):
-    app = current_app._get_current_object()
-    msg = Message(app.config['FLASKY_MAIL_SUBJECT_PREFIX'] + ' ' + subject,
-                  sender=app.config['FLASKY_MAIL_SENDER'], recipients=[to])
-    msg.html = render_template(template + '.html', **kwargs)
-    thr = Thread(target=send_async_email, args=[app, msg])
-    thr.start()
-    return thr
-
-
+# -------------------------------------------------------------
+# Função principal chamada pelo sistema Flask
+# -------------------------------------------------------------
 def send_email(to, subject, template, **kwargs):
     app = current_app._get_current_object()
-    print('Enviando mensagem (POST)...', flush=True)
-    print('URL: ' + str(app.config['API_URL']), flush=True)
-    print('api: ' + str(app.config['API_KEY']), flush=True)
-    print('from: ' + str(app.config['API_FROM']), flush=True)
-    print('to: ' + str(to), flush=True)
-    print('subject: ' + str(app.config['FLASKY_MAIL_SUBJECT_PREFIX']) + ' ' + subject, flush=True)
-    #print('text: ' + "Novo usuário cadastrado: " + newUser, flush=True)
 
-    resposta = requests.post(app.config['API_URL'], 
-                             auth=("api", app.config['API_KEY']), data={"from": app.config['API_FROM'], 
-                                                                        "to": to, 
-                                                                        "subject": app.config['FLASKY_MAIL_SUBJECT_PREFIX'] + ' ' + subject, 
-                                                                        "html": render_template(template + '.html', **kwargs)})
+    # prefixo do Flasky
+    subject = f"{app.config['FLASKY_MAIL_SUBJECT_PREFIX']} {subject}"
+
+    # renderiza template.html
+    html = render_template(template + '.html', **kwargs)
+
+    # thread para envio assíncrono
+    thr = Thread(target=send_async_sendgrid, args=[app, to, subject, html])
+    thr.start()
+    return thr
